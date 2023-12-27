@@ -3,9 +3,11 @@ import os
 import os.path
 import threading
 
+from appdaemon.config import ADConfig
+
 
 class AppDaemon:
-    def __init__(self, logging, loop, **kwargs):
+    def __init__(self, logging, loop, ad_config: ADConfig, **kwargs):
         #
         # Import various AppDaemon bits and pieces now to avoid circular import
         #
@@ -25,161 +27,33 @@ class AppDaemon:
         import appdaemon.utils as utils
 
         self.logging = logging
-        self.logging.register_ad(self)
         self.logger = logging.get_logger()
-        self.threading = None
+        self.config = ad_config
+
+        logging.set_tz(self.config.tz)
+
+        # TODO: resolve coupling of logging and these
         self.callbacks = None
-        self.futures = None
-        self.state = None
+        self.events = None
+        self.thread_async = None
+        self.logging.register_ad(self)
 
-        self.config = kwargs
         self.booted = "booting"
-        self.config["ad_version"] = utils.__version__
-        self.check_app_updates_profile = ""
-
-        self.was_dst = False
-
-        self.last_state = None
-
-        self.executor = None
-        self.loop = None
-        self.srv = None
-        self.appd = None
         self.stopping = False
+
         self.http = None
         self.admin_loop = None
 
         self.global_vars = {}
         self.global_lock = threading.RLock()
 
-        self.config_file_modified = 0
-
-        self.sched = None
-        self.thread_async = None
         self.utility = None
-        self.module_debug = kwargs["module_debug"]
 
-        # User Supplied/Defaults
+        if not self.config.apps:
+            self.logging.log("INFO", "Apps are disabled")
 
-        self.load_distribution = "roundrobbin"
-        utils.process_arg(self, "load_distribution", kwargs)
-
-        self.app_dir = None
-        utils.process_arg(self, "app_dir", kwargs)
-
-        self.starttime = None
-        utils.process_arg(self, "starttime", kwargs)
-
-        self.latitude = None
-        utils.process_arg(self, "latitude", kwargs, float=True)
-
-        self.longitude = None
-        utils.process_arg(self, "longitude", kwargs, float=True)
-
-        self.elevation = None
-        utils.process_arg(self, "elevation", kwargs, int=True)
-
-        self.time_zone = None
-        utils.process_arg(self, "time_zone", kwargs)
-
-        self.tz = None
         self.loop = loop
 
-        self.logfile = None
-        self.errfile = None
-
-        self.config_file = None
-        utils.process_arg(self, "config_file", kwargs)
-
-        self.config_dir = None
-        utils.process_arg(self, "config_dir", kwargs)
-
-        self.timewarp = 1
-        utils.process_arg(self, "timewarp", kwargs, float=True)
-
-        self.max_clock_skew = 1
-        utils.process_arg(self, "max_clock_skew", kwargs, int=True)
-
-        self.thread_duration_warning_threshold = 10
-        utils.process_arg(self, "thread_duration_warning_threshold", kwargs, float=True)
-
-        self.threadpool_workers = 10
-        utils.process_arg(self, "threadpool_workers", kwargs, int=True)
-
-        self.endtime = None
-        utils.process_arg(self, "endtime", kwargs)
-
-        self.loglevel = "INFO"
-        utils.process_arg(self, "loglevel", kwargs)
-
-        self.api_port = None
-        utils.process_arg(self, "api_port", kwargs)
-
-        self.utility_delay = 1
-        utils.process_arg(self, "utility_delay", kwargs, int=True)
-
-        self.admin_delay = 1
-        utils.process_arg(self, "admin_delay", kwargs, int=True)
-
-        self.max_utility_skew = self.utility_delay * 2
-        utils.process_arg(self, "max_utility_skew", kwargs, float=True)
-
-        self.check_app_updates_profile = False
-        utils.process_arg(self, "check_app_updates_profile", kwargs)
-
-        self.production_mode = False
-        utils.process_arg(self, "production_mode", kwargs)
-
-        self.invalid_config_warnings = True
-        utils.process_arg(self, "invalid_config_warnings", kwargs)
-
-        self.use_toml = False
-        utils.process_arg(self, "use_toml", kwargs)
-
-        self.missing_app_warnings = True
-        utils.process_arg(self, "missing_app_warnings", kwargs)
-
-        self.log_thread_actions = False
-        utils.process_arg(self, "log_thread_actions", kwargs)
-
-        self.qsize_warning_threshold = 50
-        utils.process_arg(self, "qsize_warning_threshold", kwargs, int=True)
-
-        self.qsize_warning_step = 60
-        utils.process_arg(self, "qsize_warning_step", kwargs, int=True)
-
-        self.qsize_warning_iterations = 10
-        utils.process_arg(self, "qsize_warning_iterations", kwargs, int=True)
-
-        self.internal_function_timeout = 10
-        utils.process_arg(self, "internal_function_timeout", kwargs, int=True)
-
-        self.use_dictionary_unpacking = False
-        utils.process_arg(self, "use_dictionary_unpacking", kwargs)
-
-        self.use_stream = False
-        utils.process_arg(self, "use_stream", kwargs)
-
-        self.namespaces = {}
-        utils.process_arg(self, "namespaces", kwargs)
-
-        self.exclude_dirs = ["__pycache__"]
-        if "exclude_dirs" in kwargs:
-            self.exclude_dirs += kwargs["exclude_dirs"]
-
-        self.stop_function = None
-        utils.process_arg(self, "stop_function", kwargs)
-
-        if not kwargs.get("cert_verify", True):
-            self.certpath = False
-
-        if kwargs.get("disable_apps") is True:
-            self.apps = False
-            self.logging.log("INFO", "Apps are disabled")
-        else:
-            self.apps = True
-
-        #
         # Set up services
         #
         self.services = services.Services(self)
@@ -214,7 +88,8 @@ class AppDaemon:
         #
         self.futures = futures.Futures(self)
 
-        if self.apps is True:
+        self.threading = None
+        if self.apps:
             if self.app_dir is None:
                 if self.config_dir is None:
                     self.app_dir = utils.find_path("apps")
@@ -235,28 +110,16 @@ class AppDaemon:
 
         self.stopping = False
 
-        #
-        # Set up Executor ThreadPool
-        #
-        if "threadpool_workers" in kwargs:
-            self.threadpool_workers = int(kwargs["threadpool_workers"])
-
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.threadpool_workers)
 
         # Initialize Plugins
-
-        if "plugins" in kwargs:
-            args = kwargs["plugins"]
-        else:
-            args = None
-
-        self.plugins = plugins.Plugins(self, args)
+        self.plugins = plugins.Plugins(self, kwargs.get("plugins", {}))
 
         # Create thread_async Loop
 
         self.logger.debug("Starting thread_async loop")
-
-        if self.apps is True:
+        self.thread_async = None
+        if self.apps:
             self.thread_async = appq.ThreadAsync(self)
             loop.create_task(self.thread_async.loop())
 
@@ -266,6 +129,10 @@ class AppDaemon:
 
         self.utility = utility.Utility(self)
         loop.create_task(self.utility.loop())
+
+    def __getattr__(self, item):
+        # HACK to maintain backwards compatibility
+        return getattr(self.config, item)
 
     def stop(self):
         self.stopping = True

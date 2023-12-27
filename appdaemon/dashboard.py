@@ -1,6 +1,8 @@
 import os
 import ast
 import re
+from typing import Any
+
 import yaml
 from jinja2 import Environment, BaseLoader, FileSystemLoader, select_autoescape
 import traceback
@@ -13,10 +15,11 @@ import datetime
 from collections import OrderedDict
 
 import appdaemon.utils as ha
+from appdaemon.config import HADashboardConfig
 
 
 class Dashboard:
-    def __init__(self, config_dir, logging, **kwargs):
+    def __init__(self, config_dir, logging, config: HADashboardConfig, **kwargs):
         #
         # Set Defaults
         #
@@ -25,64 +28,20 @@ class Dashboard:
         self.logging = logging
         self.logger = logging.get_child("_dashboard")
         self.access = logging.get_access()
-        self.dashboard_dir = os.path.join(config_dir, "dashboards")
-        self.profile_dashboard = False
-        self.compile_dir = os.path.join(self.config_dir, "compiled")
-        self.javascript_dir = None
-        self.compiled_javascript_dir = os.path.join(self.compile_dir, "javascript")
-        self.compiled_html_dir = os.path.join(self.compile_dir, "html")
-        self.template_dir = None
-        self.css_dir = None
-        self.compiled_css_dir = os.path.join(self.compile_dir, "css")
-        self.fonts_dir = None
-        self.webfonts_dir = None
-        self.images_dir = None
-        self.base_url = ""
-        self.dash_force_compile = False
-        self.dash_compile_on_start = False
-        self.max_include_depth = 10
-        self.fa4compatibility = False
-        self.transport = "ws"
-        self.title = "HADashboard"
+        self._config = config
         #
         # Process any overrides
         #
-        self._process_arg("profile_dashboard", kwargs)
-        self._process_arg("dashboard_dir", kwargs)
-        self._process_arg("compile_dir", kwargs)
-        self._process_arg("javascript_dir", kwargs)
-        self._process_arg("compiled_javascript_dir", kwargs)
-        self._process_arg("compiled_html_dir", kwargs)
-        self._process_arg("template_dir", kwargs)
-        self._process_arg("css_dir", kwargs)
-        self._process_arg("compiled_css_dir", kwargs)
-        self._process_arg("fonts_dir", kwargs)
-        self._process_arg("webfonts_dir", kwargs)
-        self._process_arg("images_dir", kwargs)
-        self._process_arg("base_url", kwargs)
-        self._process_arg("dash_force_compile", kwargs)
-        self._process_arg("dash_compile_on_start", kwargs)
-        self._process_arg("max_include_depth", kwargs)
-        self._process_arg("fa4compatibility", kwargs)
-        self._process_arg("transport", kwargs)
-        self._process_arg("title", kwargs)
         #
         # Create some dirs
         #
         try:
-            js = os.path.join(self.compile_dir, "javascript")
-            css = os.path.join(self.compile_dir, "css")
-            if not os.path.isdir(self.compile_dir):
-                os.makedirs(self.compile_dir)
+            os.makedirs(self.compile_dir, exist_ok=True)
+            os.makedirs(self.compiled_javascript_dir, exist_ok=True)
+            os.makedirs(self.compiled_css_dir, exist_ok=True)
 
-            if not os.path.isdir(os.path.join(self.compile_dir, "javascript")):
-                os.makedirs(js)
-
-            if not os.path.isdir(os.path.join(self.compile_dir, "css")):
-                os.makedirs(css)
-
-            ha.check_path("css", self.logger, css, permissions="rwx")
-            ha.check_path("javascript", self.logger, js, permissions="rwx")
+            ha.check_path("css", self.logger, self.compiled_css_dir, permissions="rwx")
+            ha.check_path("javascript", self.logger, self.compiled_javascript_dir, permissions="rwx")
 
         except Exception:
             self.logger.warning("-" * 60)
@@ -95,6 +54,10 @@ class Dashboard:
         # Set a start time
         #
         self.start_time = datetime.datetime.now()
+
+    def __getattr__(self, item: str) -> Any:
+        # HACK to maintain backwards compatibility
+        return getattr(self._config, item)
 
     def _timeit(func):
         @functools.wraps(func)
@@ -126,11 +89,6 @@ class Dashboard:
             return dash
 
         return profiled_fn
-
-    def _process_arg(self, arg, kwargs):
-        if kwargs:
-            if arg in kwargs:
-                setattr(self, arg, kwargs[arg])
 
     # noinspection PyUnresolvedReferences,PyUnresolvedReferences,PyUnresolvedReferences,PyUnresolvedReferences
     def _load_css_params(self, skin, skindir):
@@ -775,7 +733,7 @@ class Dashboard:
                 skin = "default"
                 skindir = os.path.join(self.css_dir, "default")
 
-        if self.dash_force_compile is False:
+        if self._config.force_compile is False:
             do_compile = False
 
             if recompile is True:
@@ -817,7 +775,7 @@ class Dashboard:
 
             # Force compilation at startup
 
-            if self.start_time > last_compiled and self.dash_compile_on_start is True:
+            if self.start_time > last_compiled and self._config.compile_on_start is True:
                 do_compile = True
 
             if do_compile is False:

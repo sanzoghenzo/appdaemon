@@ -1,9 +1,9 @@
+import pytest
+
 from appdaemon.__main__ import ADMain
 
 
-# TODO: fake test to assert that pytest works correctly
-
-
-def test_main():
+def test_main_no_cli_args():
     main = ADMain()
-    assert main is not None
+    with pytest.raises(SystemExit):
+        main.main([])

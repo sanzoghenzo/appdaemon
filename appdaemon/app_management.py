@@ -19,7 +19,6 @@ from appdaemon.appdaemon import AppDaemon
 class AppManagement:
     def __init__(self, ad: AppDaemon, use_toml):
         self.AD = ad
-        self.use_toml = use_toml
         self.ext = ".toml" if use_toml is True else ".yaml"
         self.logger = ad.logging.get_child("_app_management")
         self.error = ad.logging.get_error()

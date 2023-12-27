@@ -57,9 +57,9 @@ class PluginBase:
 class Plugins:
     required_meta = ["latitude", "longitude", "elevation", "time_zone"]
 
-    def __init__(self, ad: AppDaemon, kwargs):
+    def __init__(self, ad: AppDaemon, plugins):
         self.AD = ad
-        self.plugins = kwargs
+        self.plugins = plugins
         self.stopping = False
 
         self.plugin_meta = {}

@@ -5,7 +5,7 @@ import re
 import time
 import traceback
 import concurrent.futures
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 from urllib.parse import urlparse
 import feedparser
 from aiohttp import web
@@ -14,12 +14,13 @@ import bcrypt
 import uuid
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-import appdaemon.dashboard as addashboard
-import appdaemon.utils as utils
-import appdaemon.stream.adstream as stream
 import appdaemon.admin as adadmin
+import appdaemon.dashboard as addashboard
+import appdaemon.stream.adstream as stream
+import appdaemon.utils as utils
 
 from appdaemon.appdaemon import AppDaemon
+from appdaemon.config import HADashboardConfig, OldAdminConfig, AdminConfig, HTTPConfig
 
 
 def securedata(myfunc):
@@ -107,13 +108,22 @@ def route_secure(myfunc):
 
 
 class HTTP:
-    def __init__(self, ad: AppDaemon, loop, logging, appdaemon, dashboard, old_admin, admin, api, http):
+    def __init__(
+        self,
+        ad: AppDaemon,
+        loop,
+        logging,
+        dashboard: HADashboardConfig,
+        old_admin: OldAdminConfig | None,
+        admin: AdminConfig | None,
+        api,
+        http: HTTPConfig,
+    ) -> None:
         self.AD = ad
         self.logging = logging
         self.logger = ad.logging.get_child("_http")
         self.access = ad.logging.get_access()
 
-        self.appdaemon = appdaemon
         self.dashboard = dashboard
         self.dashboard_dir = None
         self.old_admin = old_admin
@@ -122,22 +132,14 @@ class HTTP:
         self.api = api
         self.runner = None
 
-        self.template_dir = os.path.join(os.path.dirname(__file__), "assets", "templates")
-
-        self.password = None
         self.valid_tokens = []
-        self.url = None
-        self.work_factor = 12
-        self.ssl_certificate = None
-        self.ssl_key = None
-        self.transport = "ws"
 
-        self.config_dir = None
-        self._process_arg("config_dir", dashboard)
+        self.config_dir = dashboard.config_dir
 
-        self.static_dirs = {}
-
-        self._process_http(http)
+        if not http.url:
+            self.logger.warning(f"url is {http.url!r}. Please configure appdaemon.yaml")
+            exit(0)
+        self.logger.info("Using '%s' for event stream", http.transport)
 
         self.stopping = False
 
@@ -145,25 +147,24 @@ class HTTP:
         self.app_routes = {}
 
         self.dashboard_obj = None
-        self.admin_obj = None
 
-        self.install_dir = os.path.dirname(__file__)
-
-        self.javascript_dir = os.path.join(self.install_dir, "assets", "javascript")
-        self.template_dir = os.path.join(self.install_dir, "assets", "templates")
-        self.css_dir = os.path.join(self.install_dir, "assets", "css")
-        self.fonts_dir = os.path.join(self.install_dir, "assets", "fonts")
-        self.webfonts_dir = os.path.join(self.install_dir, "assets", "webfonts")
-        self.images_dir = os.path.join(self.install_dir, "assets", "images")
+        install_dir = os.path.dirname(__file__)
+        assets_dir = os.path.join(install_dir, "assets")
+        self.javascript_dir = os.path.join(assets_dir, "javascript")
+        self.template_dir = os.path.join(assets_dir, "templates")
+        self.css_dir = os.path.join(assets_dir, "css")
+        self.fonts_dir = os.path.join(assets_dir, "fonts")
+        self.webfonts_dir = os.path.join(assets_dir, "webfonts")
+        self.images_dir = os.path.join(assets_dir, "images")
 
         # AUI
-        self.aui_dir = os.path.join(self.install_dir, "assets", "aui")
-        self.aui_css_dir = os.path.join(self.install_dir, "assets", "aui/css")
-        self.aui_js_dir = os.path.join(self.install_dir, "assets", "aui/js")
+        self.aui_dir = os.path.join(assets_dir, "aui")
+        self.aui_css_dir = os.path.join(assets_dir, "aui/css")
+        self.aui_js_dir = os.path.join(assets_dir, "aui/js")
+        self.context = None
 
         try:
-            url = urlparse(self.url)
-
+            url = urlparse(http.url)
             net = url.netloc.split(":")
             self.host = net[0]
             try:
@@ -189,8 +190,6 @@ class HTTP:
             if self.ssl_certificate is not None and self.ssl_key is not None:
                 self.context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
                 self.context.load_cert_chain(self.ssl_certificate, self.ssl_key)
-            else:
-                self.context = None
 
             self.setup_http_routes()
 
@@ -208,38 +207,25 @@ class HTTP:
             # Admin
             #
 
-            admin_args = None
-            if admin is not None:
-                self.logger.info("Starting Admin Interface")
+            if old_admin is None and admin is None:
+                self.logger.info("Admin Interface is disabled")
+                self.admin_obj = None
+            else:
+                if admin is not None:
+                    self.logger.info("Starting Admin Interface")
+                    admin_args = admin
+                else:
+                    self.logger.info("Starting Old Admin Interface")
+                    admin_args = old_admin
 
-                self.stats_update = "realtime"
-                self._process_arg("stats_update", admin)
-                admin_args = admin
-
-            if old_admin is not None:
-                self.logger.info("Starting Old Admin Interface")
-
-                self.stats_update = "realtime"
-                self._process_arg("stats_update", old_admin)
-                admin_args = old_admin
-
-            if old_admin is not None or admin is not None:
                 self.admin_obj = adadmin.Admin(
                     self.config_dir,
                     logging,
                     self.AD,
-                    javascript_dir=self.javascript_dir,
                     template_dir=self.template_dir,
-                    css_dir=self.css_dir,
-                    fonts_dir=self.fonts_dir,
-                    webfonts_dir=self.webfonts_dir,
-                    images_dir=self.images_dir,
                     transport=self.transport,
-                    **admin_args,
+                    title=admin_args.title,
                 )
-
-            if old_admin is None and admin is None:
-                self.logger.info("Admin Interface is disabled")
             #
             # Dashboards
             #
@@ -269,53 +255,34 @@ class HTTP:
             self.logger.warning(traceback.format_exc())
             self.logger.warning("-" * 60)
 
-    def _process_dashboard(self, dashboard):
+    def __getattr__(self, item: str) -> Any:
+        # HACK to maintain backwards compatibility
+        try:
+            return getattr(self.dashboard, item)
+        except AttributeError:
+            return getattr(self.http, item)
+
+    def _process_dashboard(self, dashboard: HADashboardConfig):
         self.logger.info("Starting Dashboards")
 
-        self._process_arg("dashboard_dir", dashboard)
+        self.rss_feeds = []
+        for feed in dashboard.rss_feeds:
+            if feed["target"].count(".") != 1:
+                self.logger.warning("Invalid RSS feed target: %s", feed["target"])
+            else:
+                self.rss_feeds.append(feed)
 
-        self.compile_on_start = True
-        self._process_arg("compile_on_start", dashboard)
-
-        self.force_compile = False
-        self._process_arg("force_compile", dashboard)
-
-        self.profile_dashboard = False
-        self._process_arg("profile_dashboard", dashboard)
-
-        self.rss_feeds = None
-        self._process_arg("rss_feeds", dashboard)
-
-        self.fa4compatibility = False
-        self._process_arg("fa4compatibility", dashboard)
-
-        if "rss_feeds" in dashboard:
-            self.rss_feeds = []
-            for feed in dashboard["rss_feeds"]:
-                if feed["target"].count(".") != 1:
-                    self.logger.warning("Invalid RSS feed target: %s", feed["target"])
-                else:
-                    self.rss_feeds.append(feed)
-
-        self.rss_update = None
-        self._process_arg("rss_update", dashboard)
-
+        self.rss_update = dashboard.rss_update
         self.rss_last_update = None
 
         # find dashboard dir
 
+        self.dashboard_dir = dashboard.dashboard_dir
         if self.dashboard_dir is None:
             if self.config_dir is None:
                 self.dashboard_dir = utils.find_path("dashboards")
             else:
                 self.dashboard_dir = os.path.join(self.config_dir, "dashboards")
-
-        self.javascript_dir = os.path.join(self.install_dir, "assets", "javascript")
-        self.template_dir = os.path.join(self.install_dir, "assets", "templates")
-        self.css_dir = os.path.join(self.install_dir, "assets", "css")
-        self.fonts_dir = os.path.join(self.install_dir, "assets", "fonts")
-        self.webfonts_dir = os.path.join(self.install_dir, "assets", "webfonts")
-        self.images_dir = os.path.join(self.install_dir, "assets", "images")
 
         #
         # Setup compile directories
@@ -325,42 +292,8 @@ class HTTP:
         else:
             self.compile_dir = os.path.join(self.config_dir, "compiled")
 
-        self.dashboard_obj = addashboard.Dashboard(
-            self.config_dir,
-            self.logging,
-            dash_compile_on_start=self.compile_on_start,
-            dash_force_compile=self.force_compile,
-            profile_dashboard=self.profile_dashboard,
-            dashboard_dir=self.dashboard_dir,
-            fa4compatibility=self.fa4compatibility,
-            transport=self.transport,
-            javascript_dir=self.javascript_dir,
-            template_dir=self.template_dir,
-            css_dir=self.css_dir,
-            fonts_dir=self.fonts_dir,
-            webfonts_dir=self.webfonts_dir,
-            images_dir=self.images_dir,
-        )
+        self.dashboard_obj = addashboard.Dashboard(self.config_dir, self.logging, dashboard)
         self.setup_dashboard_routes()
-
-    def _process_http(self, http):
-        self._process_arg("password", http)
-        self._process_arg("tokens", http)
-        self._process_arg("work_factor", http)
-        self._process_arg("ssl_certificate", http)
-        self._process_arg("ssl_key", http)
-
-        self._process_arg("url", http)
-        if not self.url:
-            self.logger.warning(
-                "'{arg}' is '{value}'. Please configure appdaemon.yaml".format(arg="url", value=self.url)
-            )
-            exit(0)
-
-        self._process_arg("transport", http)
-        self.logger.info("Using '%s' for event stream", self.transport)
-
-        self._process_arg("static_dirs", http)
 
     async def start_server(self):
         self.logger.info("Running on port %s", self.port)
@@ -383,11 +316,6 @@ class HTTP:
 
     def stop(self):
         self.stopping = True
-
-    def _process_arg(self, arg, kwargs):
-        if kwargs:
-            if arg in kwargs:
-                setattr(self, arg, kwargs[arg])
 
     @staticmethod
     def check_password(password, hash):
