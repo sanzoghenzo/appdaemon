@@ -391,35 +391,6 @@ def _sanitize_kwargs(kwargs, keys):
     return kwargs
 
 
-def process_arg(self, arg, args, **kwargs):
-    if args:
-        if arg in args:
-            value = args[arg]
-            if "int" in kwargs and kwargs["int"] is True:
-                try:
-                    value = int(value)
-                    setattr(self, arg, value)
-                except ValueError:
-                    self.logger.warning(
-                        "Invalid value for %s: %s, using default(%s)",
-                        value,
-                        getattr(self, arg),
-                    )
-            if "float" in kwargs and kwargs["float"] is True:
-                try:
-                    value = float(value)
-                    setattr(self, arg, value)
-                except ValueError:
-                    self.logger.warning(
-                        "Invalid value for %s: %s, using default(%s)",
-                        arg,
-                        value,
-                        getattr(self, arg),
-                    )
-            else:
-                setattr(self, arg, value)
-
-
 def find_owner(filename):
     return pwd.getpwuid(os.stat(filename).st_uid).pw_name
 

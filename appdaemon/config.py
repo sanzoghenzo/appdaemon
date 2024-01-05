@@ -21,6 +21,9 @@ class ADConfig(BaseModel):
     config_dir: str | None = None
     timewarp: float = 1
     max_clock_skew: int = 1
+    total_threads: int | None = None
+    pin_apps: bool = True
+    pin_threads: int | None = None  # TODO: gte 0
     thread_duration_warning_threshold: float = 10
     threadpool_workers: int = 10
     endtime: str | None = None

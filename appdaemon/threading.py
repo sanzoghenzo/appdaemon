@@ -14,12 +14,13 @@ import iso8601
 
 from appdaemon import utils as utils
 from appdaemon.appdaemon import AppDaemon
+from appdaemon.config import ADConfig
 
 
 class Threading:
-    def __init__(self, ad: AppDaemon, kwargs):
+    def __init__(self, ad: AppDaemon, config: ADConfig):
         self.AD = ad
-        self.kwargs = kwargs
+        self.config = config
 
         self.logger = ad.logging.get_child("_threading")
         self.diag = ad.logging.get_diag()
@@ -112,32 +113,17 @@ class Threading:
         )
 
     async def create_initial_threads(self):
-        kwargs = self.kwargs
+        config = self.config
 
-        if "threads" in kwargs:
-            self.logger.warning(
-                "Threads directive is deprecated apps - will be pinned. Use total_threads if you want to unpin your apps"
-            )
-
-        if "total_threads" in kwargs:
-            self.total_threads = kwargs["total_threads"]
-            self.auto_pin = False
+        self.pin_apps = config.pin_apps
+        if config.total_threads is not None:
+            self.total_threads = config.total_threads
         else:
             apps = await self.AD.app_management.check_config(True, False)
-            self.total_threads = int(apps["active"])
+            self.total_threads = int(apps["active"]) if self.pin_apps else 10
 
-        self.pin_apps = True
-        utils.process_arg(self, "pin_apps", kwargs)
-
-        if self.pin_apps is True:
-            self.pin_threads = self.total_threads
-        else:
-            self.auto_pin = False
-            self.pin_threads = 0
-            if "total_threads" not in kwargs:
-                self.total_threads = 10
-
-        utils.process_arg(self, "pin_threads", kwargs, int=True)
+        self.pin_threads = config.pin_threads or (self.total_threads if self.pin_apps else 0)
+        self.auto_pin = config.total_threads is None and self.pin_apps
 
         if self.pin_threads > self.total_threads:
             raise ValueError("pin_threads cannot be > total_threads")
