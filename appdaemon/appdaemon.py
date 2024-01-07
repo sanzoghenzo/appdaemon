@@ -106,7 +106,7 @@ class AppDaemon:
 
             # threading setup
 
-            self.threading = appdaemon.threading.Threading(self, kwargs)
+            self.threading = appdaemon.threading.Threading(self, ad_config)
 
         self.stopping = False
 

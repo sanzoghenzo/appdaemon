@@ -6,7 +6,6 @@ AppDaemon module that contains main() along with argument parsing, instantiation
 also creates the loop and kicks everything off
 
 """
-
 import argparse
 import asyncio
 import os
@@ -17,13 +16,12 @@ import sys
 from typing import Sequence, TypeVar, Any
 
 from pydantic import ValidationError, BaseModel
+import pytz
 
 import appdaemon.appdaemon as ad
 import appdaemon.http as adhttp
 import appdaemon.logging as logging
 import appdaemon.utils as utils
-import pytz
-
 from appdaemon.config import ADConfig, HADashboardConfig, OldAdminConfig, AdminConfig, HTTPConfig
 
 try:
